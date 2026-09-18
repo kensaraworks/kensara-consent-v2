@@ -8,6 +8,10 @@
   const DEFAULTS = window.KensaraConsent.defaults("en");
   const blank = () => ({ scan: null, cookies: [], storage: [], hosts: [], leadContext: "" });
   let state = blank();
+  const BASE = (function () {
+    var p = location.pathname;
+    return p.endsWith("/") ? p : p.slice(0, p.lastIndexOf("/") + 1);
+  })();
 
   /* ---------- links from site-config.js ---------- */
   ["#privacy-link-1", "#privacy-link-2"].forEach(s => { $(s).href = SITE.privacyNoticeUrl || "#"; });
@@ -52,14 +56,14 @@
     let i = 0; $("#scan-msg").textContent = msgs[0];
     const tick = setInterval(() => { $("#scan-msg").textContent = msgs[Math.min(++i, msgs.length - 1)]; }, 7000);
     try {
-      const r = await fetch("/api/scan", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ url, turnstileToken: tsToken("scan") }) });
+      const r = await fetch(BASE + "api/scan", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ url, turnstileToken: tsToken("scan") }) });
       const data = await r.json().catch(() => ({}));
       if (!r.ok) throw new Error(data.error || "The scan didn't finish. Try again, or try the sample website.");
       loadScan(data);
     } catch (err) { $("#scan-err").textContent = err.message; }
     finally { clearInterval(tick); $("#scan-btn").disabled = false; $("#scanning").hidden = true; tsReset("scan"); }
   });
-  $("#sample").onclick = async () => { const r = await fetch("/sample-scan.json"); loadScan(await r.json()); };
+  $("#sample").onclick = async () => { const r = await fetch(BASE + "sample-scan.json"); loadScan(await r.json()); };
 
   function loadScan(data) {
     state.scan = data;
@@ -200,7 +204,7 @@
   const frame = $("#demo-frame");
   function sendConfig() { if (state.config && frame.contentWindow) frame.contentWindow.postMessage({ type: "kensara-demo-config", config: state.config }, location.origin); }
   function startDemo() {
-    if (!frame.src.endsWith("/demo-site.html")) frame.src = "/demo-site.html"; else sendConfig();
+    if (!frame.src.endsWith("demo-site.html")) frame.src = BASE + "demo-site.html"; else sendConfig();
     setTimeout(() => frame.scrollIntoView({ block: "start", behavior: "smooth" }), 400);
   }
   frame.addEventListener("load", sendConfig);
@@ -236,7 +240,7 @@
     };
     $("#lead-send").disabled = true; $("#lead-err").textContent = "";
     try {
-      const r = await fetch("/api/lead", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload) });
+      const r = await fetch(BASE + "api/lead", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload) });
       const data = await r.json().catch(() => ({}));
       if (!r.ok) throw new Error(data.error || "Couldn't send. Please email us instead.");
       $("#lead-body").hidden = true; $("#lead-done").hidden = false; LF.reset();
