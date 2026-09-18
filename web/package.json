@@ -1,0 +1,9 @@
+{
+  "name": "kensara-consent-demo",
+  "version": "2.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Kensara consent banner demo: scan, configure and see the banner working. Pro features are upsold.",
+  "scripts": { "dev": "node dev-server.js" },
+  "engines": { "node": ">=18" }
+}
