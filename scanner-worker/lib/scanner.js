@@ -62,6 +62,9 @@ async function scan(url, { proxyOptions } = {}) {
       "--disable-quic",                        // no UDP path around the proxy
       "--force-webrtc-ip-handling-policy=disable_non_proxied_udp",
       "--disable-dev-shm-usage",
+      "--disable-gpu",
+      "--disable-software-rasterizer",
+      "--js-flags=--max-old-space-size=256",
       ...(process.env.SCANNER_NO_SANDBOX === "1" ? ["--no-sandbox"] : []), // only if the container truly can't sandbox
     ],
   });
@@ -90,7 +93,7 @@ async function run(browser, url, siteDomain) {
     let u; try { u = new URL(r.url()); } catch { return route.abort(); }
     if (!/^https?:$/.test(u.protocol)) return route.continue();   // data:, blob: are local
     if (u.port && u.port !== "80" && u.port !== "443") return route.abort();
-    if (["media", "font"].includes(r.resourceType())) return route.abort();
+    if (["media", "font", "image", "imageset"].includes(r.resourceType())) return route.abort();
     return route.continue();
   });
 
