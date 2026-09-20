@@ -32,7 +32,7 @@ const MAX_PAGES = +(process.env.MAX_PAGES || 5);
 const PAGE_TIMEOUT = +(process.env.PAGE_TIMEOUT_MS || 12000);
 // Whole-scan budget. Kept under the caller's request timeout (and under 40 s) so we
 // return partial results rather than letting the caller time out first.
-const SCAN_DEADLINE_MS = +(process.env.SCAN_DEADLINE_MS || 35000);
+const SCAN_DEADLINE_MS = +(process.env.SCAN_DEADLINE_MS || 32000);
 // Resource types we never need for cookie/tracker detection — dropping them is the
 // single biggest speed and memory win. Scripts, XHR and fetch are KEPT (that's the tracking).
 const DROP_TYPES = new Set(["image", "imageset", "media", "font", "stylesheet"]);
@@ -84,6 +84,19 @@ function duration(expires) {
 }
 function stripHash(href) { try { const u = new URL(href); u.hash = ""; return u.href; } catch { return href; } }
 const clamp = (v, lo, hi) => Math.max(lo, Math.min(hi, v));
+
+// A browser call (goto, evaluate, cookies) can occasionally hang past its own timeout on a
+// hostile/heavy page. This bounds ANY promise so the scan can never overrun its budget:
+// on timeout it resolves the TIMED_OUT sentinel instead of waiting forever.
+const TIMED_OUT = Symbol("timeout");
+function withTimeout(promise, ms) {
+  let t;
+  const guard = new Promise(res => { t = setTimeout(() => res(TIMED_OUT), ms); });
+  return Promise.race([
+    Promise.resolve(promise).then(v => { clearTimeout(t); return v; }, e => { clearTimeout(t); throw e; }),
+    guard,
+  ]);
+}
 
 async function scan(url, { proxyOptions } = {}) {
   const port = await startProxy(proxyOptions);
@@ -198,26 +211,28 @@ async function run(browser, url, siteDomain, deadlineAt) {
     if (timeLeft() < 4000) return { visited: false, links: [] };
     try {
       const gotoBudget = clamp(timeLeft() - 3000, 3500, PAGE_TIMEOUT);
-      const resp = await page.goto(target, { waitUntil: "domcontentloaded", timeout: gotoBudget });
+      const resp = await withTimeout(page.goto(target, { waitUntil: "domcontentloaded", timeout: gotoBudget }), gotoBudget + 2000);
+      if (resp === TIMED_OUT) { errors.push(`${target}: load timed out`); return { visited: false, links: [] }; }
       if (resp && resp.headers()["x-kensara-egress"] === "denied") {
         if (isHome) throw Object.assign(new Error("This address isn't a public website."), { denied: true });
         return { visited: false, links: [] };  // a link or redirect pointed somewhere internal: skip it
       }
       // Spend more of the budget on the homepage (most tags fire there), less on inner pages.
       const perPage = isHome ? clamp(timeLeft() - 8000, 3000, 9000) : clamp(timeLeft() - 4000, 1500, 6000);
-      await hydrate(perPage);
+      await withTimeout(hydrate(perPage), perPage + 2500);
       pagesVisited.push(page.url());
-      await readStorage();
+      await withTimeout(readStorage(), 3500);
 
       let links = [];
       if (isHome) {
         const base = new URL(page.url());
-        const raw = await page.$$eval("a[href]", as => as.map(a => a.href)).catch(() => []);
+        const rawE = await withTimeout(page.$$eval("a[href]", as => as.map(a => a.href)), 4000);
+        const raw = Array.isArray(rawE) ? rawE : [];
         links = [...new Set(raw)].filter(h => { try { const u = new URL(h); return u.hostname === base.hostname && /^https?:$/.test(u.protocol) && !/\.(pdf|jpe?g|png|zip|docx?|xlsx?)$/i.test(u.pathname) && !/logout|signout|wp-admin|cart\/add/i.test(u.pathname); } catch { return false; } })
           .map(stripHash).filter(h => h !== base.href).slice(0, MAX_PAGES * 3);
         // Best-effort details to pre-fill the configurator (organisation name, privacy
         // notice link, contact email/phone). Everything is optional and user-editable.
-        site = await page.evaluate(() => {
+        site = await withTimeout(page.evaluate(() => {
           const meta = n => { const el = document.querySelector(`meta[property="${n}"],meta[name="${n}"]`); return (el && el.content) || ""; };
           let orgName = meta("og:site_name") || meta("application-name") || "";
           try {
@@ -243,7 +258,8 @@ async function run(browser, url, siteDomain, deadlineAt) {
             email: mail ? clean(decodeURIComponent(href(mail).replace(/^mailto:/i, "").split("?")[0]), 200) : "",
             phone: tel ? clean(href(tel).replace(/^tel:/i, "").replace(/[^\d+ ()-]/g, ""), 30) : "",
           };
-        }).catch(() => ({}));
+        }).catch(() => ({})), 4500);
+        if (site === TIMED_OUT || !site) site = {};
       }
       return { visited: true, links };
     } catch (e) {
@@ -264,15 +280,15 @@ async function run(browser, url, siteDomain, deadlineAt) {
   let reachedAll = true;
   for (const target of queue) {
     if (pagesVisited.length >= MAX_PAGES) break;
-    if (timeLeft() < 5000) { reachedAll = false; break; }   // keep a margin so we always answer < 40 s
+    if (timeLeft() < 7000) { reachedAll = false; break; }   // keep a margin so we always answer < 40 s
     await visit(target, false);
   }
-  await page.close().catch(() => {});
-
-  if (!pagesVisited.length) throw new Error("The site couldn't be loaded. Check the address and that it's publicly reachable.");
+  if (!pagesVisited.length) { await page.close().catch(() => {}); throw new Error("The site couldn't be loaded. Check the address and that it's publicly reachable."); }
   const incomplete = !reachedAll && pagesVisited.length < Math.min(MAX_PAGES, 1 + queue.length);
 
-  const cookies = (await context.cookies()).map(c => {
+  const rawCookies = await withTimeout(context.cookies(), 4000);
+  await page.close().catch(() => {});
+  const cookies = (Array.isArray(rawCookies) ? rawCookies : []).map(c => {
     const cls = classifyCookie(c.name), cdom = c.domain.replace(/^\./, "");
     return { name: c.name, domain: cdom, firstParty: registrable(cdom) === siteDomain, duration: duration(c.expires), vendor: cls.vendor, category: cls.category, purpose: cls.purpose, suggested: cls.suggested || "" };
   }).sort((a, b) => a.category.localeCompare(b.category) || a.name.localeCompare(b.name));
