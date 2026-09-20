@@ -20,10 +20,14 @@ function getChromiumExecutable() {
   return undefined;
 }
 
-const MAX_PAGES = 4;
-const PAGE_TIMEOUT = 15000;
-const SETTLE_MS = 2500;
-const SCAN_DEADLINE_MS = +(process.env.SCAN_DEADLINE_MS || 60000); // hard cap for the whole scan
+// All tunable from the environment so the same image can run on a small or a large instance.
+const MAX_PAGES = +(process.env.MAX_PAGES || 5);
+const PAGE_TIMEOUT = +(process.env.PAGE_TIMEOUT_MS || 15000);
+const SETTLE_MS = +(process.env.SETTLE_MS || 2500);
+const CONCURRENCY = Math.max(1, +(process.env.SCAN_CONCURRENCY || 3)); // pages visited in parallel (after the homepage)
+// Hard cap for the whole scan. Kept below the caller's request timeout so we return
+// partial results instead of the caller (e.g. a Vercel function) timing out first.
+const SCAN_DEADLINE_MS = +(process.env.SCAN_DEADLINE_MS || 50000);
 
 // One egress proxy per process, bound to loopback only.
 let proxyPort = null;
@@ -50,6 +54,8 @@ function duration(expires) {
   if (days < 730) return `${Math.round(days / 30)} months`;
   return `${Math.round(days / 365)} years`;
 }
+function stripHash(href) { try { const u = new URL(href); u.hash = ""; return u.href; } catch { return href; } }
+const clamp = (v, lo, hi) => Math.max(lo, Math.min(hi, v));
 
 async function scan(url, { proxyOptions } = {}) {
   const port = await startProxy(proxyOptions);
@@ -68,18 +74,28 @@ async function scan(url, { proxyOptions } = {}) {
       ...(process.env.SCANNER_NO_SANDBOX === "1" ? ["--no-sandbox"] : []), // only if the container truly can't sandbox
     ],
   });
+  const deadlineAt = Date.now() + SCAN_DEADLINE_MS;
   let timer;
-  const deadline = new Promise((_, rej) => { timer = setTimeout(() => rej(Object.assign(new Error("The scan took too long. Try again or add cookies by hand."), { status: 504 })), SCAN_DEADLINE_MS); });
+  // Backstop only: run() self-limits to deadlineAt and returns partial results; this fires
+  // only if a page hangs badly beyond that, preserving the original hard-fail as a last resort.
+  const backstop = new Promise((_, rej) => {
+    timer = setTimeout(
+      () => rej(Object.assign(new Error("The scan took too long. Try again or add cookies by hand."), { status: 504 })),
+      SCAN_DEADLINE_MS + 8000,
+    );
+  });
   try {
-    return await Promise.race([deadline, run(browser, url, siteDomain)]);
+    return await Promise.race([backstop, run(browser, url, siteDomain, deadlineAt)]);
   } finally {
     clearTimeout(timer);
     await browser.close().catch(() => {});
   }
 }
 
-async function run(browser, url, siteDomain) {
+async function run(browser, url, siteDomain, deadlineAt) {
   const hosts = new Map(), storageKeys = new Set(), pagesVisited = [], errors = [];
+  const timeLeft = () => deadlineAt - Date.now();
+
   const context = await browser.newContext({
     locale: "en-IN", timezoneId: "Asia/Kolkata", viewport: { width: 1366, height: 850 },
     serviceWorkers: "block",                   // SW fetches aren't visible to routing
@@ -97,24 +113,29 @@ async function run(browser, url, siteDomain) {
     return route.continue();
   });
 
-  const page = await context.newPage();
-  page.on("request", r => { try { const u = new URL(r.url()); if (/^https?:$/.test(u.protocol)) hosts.set(u.hostname, (hosts.get(u.hostname) || 0) + 1); } catch {} });
+  // Record every third-party host contacted. Attached to each page we open, so it works
+  // whether pages are visited one at a time or concurrently; cookies stay context-wide.
+  const trackPage = page => page.on("request", r => {
+    try { const u = new URL(r.url()); if (/^https?:$/.test(u.protocol)) hosts.set(u.hostname, (hosts.get(u.hostname) || 0) + 1); } catch {}
+  });
 
-  const queue = [url.href], seen = new Set();
-  while (queue.length && pagesVisited.length < MAX_PAGES) {
-    const target = queue.shift();
-    if (seen.has(target)) continue;
-    seen.add(target);
+  // Visit one URL in its own tab. Returns discovered same-site links when it's the homepage.
+  async function visit(target, isHome) {
+    if (timeLeft() < 5000) return { visited: false, links: [] };
+    const page = await context.newPage();
+    trackPage(page);
     try {
-      const resp = await page.goto(target, { waitUntil: "domcontentloaded", timeout: PAGE_TIMEOUT });
+      const gotoBudget = clamp(timeLeft() - 3000, 4000, PAGE_TIMEOUT);
+      const resp = await page.goto(target, { waitUntil: "domcontentloaded", timeout: gotoBudget });
       if (resp && resp.headers()["x-kensara-egress"] === "denied") {
-        if (!pagesVisited.length) throw Object.assign(new Error("This address isn't a public website."), { denied: true });
-        continue; // a link or redirect pointed somewhere internal: skip it
+        if (isHome) throw Object.assign(new Error("This address isn't a public website."), { denied: true });
+        return { visited: false, links: [] };  // a link or redirect pointed somewhere internal: skip it
       }
-      await page.waitForLoadState("networkidle", { timeout: 6000 }).catch(() => {});
+      await page.waitForLoadState("networkidle", { timeout: clamp(timeLeft() - 2000, 1000, 6000) }).catch(() => {});
       await page.mouse.wheel(0, 2500).catch(() => {});
-      await page.waitForTimeout(SETTLE_MS);
+      await page.waitForTimeout(clamp(timeLeft() - 1500, 400, SETTLE_MS)).catch(() => {});
       pagesVisited.push(page.url());
+
       const keys = await page.evaluate(() => {
         const out = [];
         try { for (let i = 0; i < localStorage.length; i++) out.push(["localStorage", localStorage.key(i)]); } catch {}
@@ -122,19 +143,48 @@ async function run(browser, url, siteDomain) {
         return out;
       }).catch(() => []);
       keys.forEach(k => storageKeys.add(JSON.stringify(k)));
-      if (pagesVisited.length === 1) {
+
+      let links = [];
+      if (isHome) {
         const base = new URL(page.url());
-        const links = await page.$$eval("a[href]", as => as.map(a => a.href)).catch(() => []);
-        queue.push(...[...new Set(links)].filter(h => { try { const u = new URL(h); return u.hostname === base.hostname && /^https?:$/.test(u.protocol) && !/\.(pdf|jpe?g|png|zip|docx?|xlsx?)$/i.test(u.pathname) && !/logout|signout|wp-admin|cart\/add/i.test(u.pathname); } catch { return false; } })
-          .map(h => { const u = new URL(h); u.hash = ""; return u.href; }).filter(h => h !== base.href).slice(0, MAX_PAGES * 3));
+        const raw = await page.$$eval("a[href]", as => as.map(a => a.href)).catch(() => []);
+        links = [...new Set(raw)].filter(h => { try { const u = new URL(h); return u.hostname === base.hostname && /^https?:$/.test(u.protocol) && !/\.(pdf|jpe?g|png|zip|docx?|xlsx?)$/i.test(u.pathname) && !/logout|signout|wp-admin|cart\/add/i.test(u.pathname); } catch { return false; } })
+          .map(stripHash).filter(h => h !== base.href).slice(0, MAX_PAGES * 3);
       }
+      return { visited: true, links };
     } catch (e) {
       if (e.denied) throw e;
-      if (!pagesVisited.length && /ERR_TUNNEL_CONNECTION_FAILED/.test(e.message)) throw new Error("This address isn't a public website.");
+      if (isHome && /ERR_TUNNEL_CONNECTION_FAILED/.test(e.message)) throw new Error("This address isn't a public website.");
       errors.push(`${target}: ${e.message.split("\n")[0]}`);
+      return { visited: false, links: [] };
+    } finally {
+      await page.close().catch(() => {});
     }
   }
+
+  // 1) Homepage first: it validates the site and gives us the links to crawl.
+  const home = await visit(url.href, true);
+
+  // 2) Remaining pages, visited concurrently to stay within the time budget.
+  const seen = new Set([stripHash(url.href)]);
+  const queue = [];
+  for (const link of (home.links || [])) { if (!seen.has(link)) { seen.add(link); queue.push(link); } }
+
+  let next = 0;
+  const worker = async () => {
+    while (pagesVisited.length < MAX_PAGES && timeLeft() > 5000) {
+      const i = next++;
+      if (i >= queue.length) return;
+      await visit(queue[i], false);
+    }
+  };
+  const pool = clamp(CONCURRENCY, 1, Math.max(1, queue.length));
+  await Promise.all(Array.from({ length: pool }, worker));
+
   if (!pagesVisited.length) throw new Error("The site couldn't be loaded. Check the address and that it's publicly reachable.");
+
+  // True when we stopped for time with more pages we would have visited.
+  const incomplete = timeLeft() <= 5000 && pagesVisited.length < Math.min(MAX_PAGES, 1 + queue.length);
 
   const cookies = (await context.cookies()).map(c => {
     const cls = classifyCookie(c.name), cdom = c.domain.replace(/^\./, "");
@@ -157,9 +207,10 @@ async function run(browser, url, siteDomain) {
   if (unknown) findings.push({ level: "medium", text: `${unknown} item(s) set before consent couldn't be identified. If they aren't essential, they also need consent.` });
   if (url.protocol !== "https:") findings.push({ level: "medium", text: "The site doesn't use HTTPS. Personal data should be protected in transit." });
   if (errors.length) findings.push({ level: "low", text: `${errors.length} page(s) couldn't be loaded during the scan.` });
+  if (incomplete) findings.push({ level: "low", text: `The scan stopped early to stay within the time limit; results cover ${pagesVisited.length} page(s). Trackers on pages we didn't reach may not be listed.` });
 
   return { url: url.href, domain: url.hostname.replace(/^www\./, ""), scannedAt: new Date().toISOString(), pagesVisited, cookies, storage, thirdParties, vendors,
-    hints: vendors.filter(v => TAGGING_HINTS[v]).map(v => ({ vendor: v, hint: TAGGING_HINTS[v] })), findings, errors };
+    hints: vendors.filter(v => TAGGING_HINTS[v]).map(v => ({ vendor: v, hint: TAGGING_HINTS[v] })), findings, errors, incomplete };
 }
 
 module.exports = { scan };

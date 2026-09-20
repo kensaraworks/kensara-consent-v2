@@ -61,8 +61,12 @@ http.createServer((req, res) => {
       const hit = cache.get(key);
       if (hit && Date.now() - hit.at < CACHE_MS) return send(res, 200, { ...hit.result, cached: true });
       const result = await slot(() => scan(url));
-      cache.set(key, { at: Date.now(), result });
-      if (cache.size > 500) cache.delete(cache.keys().next().value);
+      // Only cache complete scans: a partial (time-limited) result shouldn't be
+      // pinned for an hour — let the next attempt try to finish the site.
+      if (!result.incomplete) {
+        cache.set(key, { at: Date.now(), result });
+        if (cache.size > 500) cache.delete(cache.keys().next().value);
+      }
       send(res, 200, result);
     } catch (e) {
       send(res, e.status || 400, { error: e.status ? e.message : (e.message || "Scan failed.") });
