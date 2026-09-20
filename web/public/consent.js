@@ -286,6 +286,8 @@
     ".bn.center{left:50%;top:50%;transform:translate(-50%,-50%);width:min(580px,calc(100vw - 32px))}" +
     ".bn.on{display:block}.bn h2{font-size:17px;margin:0 0 6px;font-weight:650}.bn p{margin:0 0 6px;color:var(--soft);font-size:14px}" +
     ".pl{margin:2px 0 8px;padding-left:18px;font-size:13.5px;color:var(--soft)}.pl li{margin:2px 0}.pl b{color:var(--ink)}" +
+    ".bpl{margin:6px 0 8px}.bp{display:flex;justify-content:space-between;align-items:center;gap:14px;padding:9px 0;border-top:1px solid var(--ln)}.bp:first-child{border-top:0}" +
+    ".bpi{min-width:0}.bpi b{font-size:14px;color:var(--ink)}.bpi span{display:block;font-size:12.5px;color:var(--soft);margin-top:1px}.bpi .lo{display:block;font-size:12px;color:var(--wr);margin-top:2px;font-style:normal}" +
     ".row{display:flex;justify-content:space-between;gap:12px;align-items:flex-start}" +
     ".acts{display:flex;flex-wrap:wrap;gap:8px;margin-top:10px;position:sticky;bottom:-16px;background:var(--bg);padding:8px 0 4px;margin-bottom:-4px}" +
     ".b{border-radius:9px;padding:10px 16px;font-weight:600;cursor:pointer;border:2px solid var(--a);min-width:140px;font-size:14px}" +
@@ -331,6 +333,18 @@
   }
   function dataItemsFor(c) { return (cfg.categories[c] && cfg.categories[c].dataItems) || t("data_" + c); }
   function usesFor(c) { return (cfg.categories[c] && cfg.categories[c].uses) || t("d_" + c); }
+  // A single optional purpose shown as a toggle directly on the first banner view.
+  function bannerToggle(c) {
+    var locked = isChild(), r = current();
+    var on = !!(r && r.purposes[c]); if (locked) on = false;
+    return '<div class="bp"><div class="bpi"><b>' + t("c_" + c) + "</b><span>" + esc(dataItemsFor(c)) + "</span>" +
+      (locked ? '<em class="lo">' + t("childLocked") + "</em>" : "") + "</div>" +
+      '<label class="sw"><input type="checkbox" role="switch" data-c="' + c + '"' + (on ? " checked" : "") + (locked ? " disabled" : "") + ' aria-label="' + esc(t("c_" + c)) + '"><span></span></label></div>';
+  }
+  function syncBannerLock() {
+    var locked = isChild();
+    root.querySelectorAll("[data-bpurposes] input[data-c]").forEach(function (i) { i.disabled = locked; if (locked) i.checked = false; });
+  }
 
   function build() {
     if (host) host.remove();
@@ -343,9 +357,9 @@
   function render() {
     var o = cfg.org, pos = cfg.theme.position, opts = enabledOpt();
     var noticeLink = o.noticeUrl ? '<a href="' + esc(o.noticeUrl) + '" target="_blank" rel="noopener">' + t("notice") + "</a>" : "";
-    var purposeList = opts.length ? '<ul class="pl">' + opts.map(function (c) { return "<li><b>" + t("c_" + c) + ":</b> " + esc(dataItemsFor(c)) + "</li>"; }).join("") + "</ul>" : "";
+    var purposeList = opts.length ? '<div class="bpl" data-bpurposes>' + opts.map(bannerToggle).join("") + "</div>" : "";
     var acts = opts.length
-      ? '<button class="b p" data-act="accept">' + t("accept") + '</button><button class="b p" data-act="reject">' + t("reject") + '</button><button class="b s" data-act="manage">' + t("manage") + "</button>"
+      ? '<button class="b p" data-act="accept">' + t("accept") + '</button><button class="b s" data-act="reject">' + t("reject") + '</button><button class="b p" data-act="save">' + t("save") + "</button>"
       : '<button class="b p" data-act="reject">' + t("ok") + "</button>";
     root.innerHTML = "<style>" + CSS + "</style>" +
       '<div class="k" style="--a:' + esc(cfg.theme.accent) + '" lang="' + lang + '">' +
@@ -354,7 +368,7 @@
         (opts.length ? ageFieldset("kage1") : "") + '<p style="font-size:13px">' + t("free") + "</p></div>" + langSelect("kl1") + "</div>" +
         '<p class="er" role="alert" data-err1></p>' +
         '<div class="acts">' + acts + "</div>" +
-        '<div class="lk">' + noticeLink + '<a href="#" data-act="rights">' + t("rights") + "</a></div>" +
+        '<div class="lk">' + noticeLink + (opts.length ? '<a href="#" data-act="manage">' + t("manage") + "</a>" : "") + '<a href="#" data-act="rights">' + t("rights") + "</a></div>" +
         (cfg.demo ? '<div class="dm">' + t("demo") + "</div>" : "") +
       "</div>" +
       '<div class="ov"><div class="md" role="dialog" aria-modal="true" aria-labelledby="km-t">' +
@@ -411,7 +425,7 @@
 
   function q(s) { return root.querySelector(s); }
   function all(v) { var o = {}; CATS.forEach(function (c) { o[c] = v; }); return o; }
-  function toggles() { var o = {}; root.querySelectorAll("input[data-c]").forEach(function (i) { o[i.getAttribute("data-c")] = i.checked; }); return o; }
+  function toggles(sel) { var o = {}; root.querySelectorAll((sel || "[data-purposes]") + " input[data-c]").forEach(function (i) { o[i.getAttribute("data-c")] = i.checked; }); return o; }
   function anyOn(o) { return OPT.some(function (c) { return o[c]; }); }
   function showBanner() { q(".bn").classList.add("on"); q(".fab").classList.remove("on"); }
   function hideBanner() { q(".bn").classList.remove("on"); q(".fab").classList.add("on"); }
@@ -439,7 +453,7 @@
         clearErrors();
         if (a === "accept") { if (cfg.ageGate && !age && enabledOpt().length) return ageError(inModal); save("accept_all", all(true)); }
         else if (a === "reject") save("reject_all", all(false));
-        else if (a === "save") { var tg = toggles(); if (cfg.ageGate && !age && anyOn(tg)) return ageError(true); save("custom", tg); }
+        else if (a === "save") { var inB = !inModal, tg = toggles(inB ? "[data-bpurposes]" : "[data-purposes]"); if (cfg.ageGate && !age && anyOn(tg)) return ageError(!inB); save("custom", tg); }
         else if (a === "manage" || a === "open") openModal("p");
         else if (a === "rights") { e.preventDefault(); openModal("r"); }
         else if (a === "close") closeModal(false);
@@ -458,7 +472,7 @@
       r.addEventListener("change", function () {
         age = r.value; clearErrors();
         root.querySelectorAll('input[name="kage1"],input[name="kage2"]').forEach(function (x) { x.checked = x.value === age; });
-        renderPurposes();
+        renderPurposes(); syncBannerLock();
       });
     });
     q(".ov").addEventListener("keydown", function (e) {

@@ -71,16 +71,16 @@
   <h2>Your organisation's details</h2>
   <p class="muted">These appear in the banner's notice. Nothing you enter here is sent to us or stored; it stays in this browser tab.</p>
   <form class="card grid" id="details" novalidate>
-    <label class="f">Organisation name<span>The Data Fiduciary</span><input type="text" name="orgName" maxlength="150" required></label>
+    <label class="f">Organisation name<abbr class="req" title="Required">*</abbr><span>The Data Fiduciary</span><input type="text" name="orgName" maxlength="150" required></label>
     <label class="f">Website domain<input type="text" name="domain" placeholder="example.in" maxlength="200"></label>
-    <label class="f full">Full privacy notice link<span>Your stand-alone notice listing the personal data you process, purposes and rights</span><input type="url" name="noticeUrl" placeholder="https://example.in/privacy" required></label>
+    <label class="f full">Full privacy notice link<abbr class="req" title="Required">*</abbr><span>Your stand-alone notice listing the personal data you process, purposes and rights</span><input type="url" name="noticeUrl" placeholder="https://example.in/privacy" required></label>
     <label class="f full">Rights request link<span>Where people ask for access, correction, erasure or nomination (optional)</span><input type="url" name="rightsUrl" placeholder="https://example.in/privacy-requests"></label>
     <label class="f">Grievance officer name<input type="text" name="gName" maxlength="100"></label>
-    <label class="f">Grievance officer email<input type="email" name="gEmail" required></label>
+    <label class="f">Grievance officer email<abbr class="req" title="Required">*</abbr><input type="email" name="gEmail" required></label>
     <label class="f">Grievance phone<input type="tel" name="gPhone" maxlength="30"></label>
     <label class="f">Days to respond<span>At most 90</span><input type="number" name="gDays" min="1" max="90" value="30"></label>
     <label class="f">Data Protection Officer email<span>If you are a Significant Data Fiduciary</span><input type="email" name="dpoEmail"></label>
-    <label class="f">Data Protection Board complaint link<span>Required in the notice. Pre-filled with MeitY's data protection page; replace it with the Board's official complaint portal once you've confirmed the address.</span><input type="url" name="boardUrl" value="https://www.meity.gov.in/data-protection-framework" required></label>
+    <label class="f">Data Protection Board complaint link<abbr class="req" title="Required">*</abbr><span>Required in the notice. Pre-filled with MeitY's data protection page; replace it with the Board's official complaint portal once you've confirmed the address.</span><input type="url" name="boardUrl" value="https://www.meity.gov.in/data-protection-framework" required></label>
 
     <div class="f full"><b>Optional purposes shown in the banner</b><span>Turned on from the scan. The personal data list is shown on the banner itself, as the notice rules ask for an itemised description. Edit it to match what you really collect.</span></div>
     <div class="full" id="purposes"></div>
@@ -135,8 +135,8 @@
     <div id="lead-body">
       <p class="muted">Tell us where to reach you and we'll set up a walkthrough for your website.</p>
       <div class="grid">
-        <label class="f">Your name<input name="name" maxlength="100" required autocomplete="name"></label>
-        <label class="f">Work email<input name="email" type="email" maxlength="200" required autocomplete="email"></label>
+        <label class="f">Your name<abbr class="req" title="Required">*</abbr><input name="name" maxlength="100" required autocomplete="name"></label>
+        <label class="f">Work email<abbr class="req" title="Required">*</abbr><input name="email" type="email" maxlength="200" required autocomplete="email"></label>
         <label class="f">Company<input name="company" maxlength="150" autocomplete="organization"></label>
         <label class="f">Website<input name="website" maxlength="200"></label>
         <label class="f">Phone (optional)<input name="phone" type="tel" maxlength="30" autocomplete="tel"></label>

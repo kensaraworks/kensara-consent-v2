@@ -11,8 +11,10 @@
     {"name": "_clck", "domain": "sample-store.example", "firstParty": true, "duration": "12 months", "vendor": "Microsoft Clarity", "category": "analytics", "purpose": "Heatmaps and session recordings"},
     {"name": "_fbp", "domain": "sample-store.example", "firstParty": true, "duration": "3 months", "vendor": "Meta (Facebook)", "category": "marketing", "purpose": "Ad targeting and conversion tracking"},
     {"name": "_gcl_au", "domain": "sample-store.example", "firstParty": true, "duration": "3 months", "vendor": "Google Ads / DoubleClick", "category": "marketing", "purpose": "Ad targeting and conversion measurement"},
-    {"name": "tawk_uuid_0", "domain": "sample-store.example", "firstParty": true, "duration": "6 months", "vendor": "Unknown", "category": "unclassified", "purpose": ""}
+    {"name": "tawk_uuid_0", "domain": "sample-store.example", "firstParty": true, "duration": "6 months", "vendor": "Tawk.to", "category": "functional", "purpose": "Live chat widget"},
+    {"name": "visitor_uid", "domain": "sample-store.example", "firstParty": true, "duration": "1 year", "vendor": "Unknown", "category": "unclassified", "suggested": "analytics", "purpose": "This stores a unique ID for your browser, usually to recognise repeat visitors. That is normally analytics, but some advertising tools do the same - please confirm which applies."}
   ],
+  "site": {"orgName": "Sample Store", "privacyUrl": "https://sample-store.example/privacy", "email": "grievance@sample-store.example", "phone": "+91 80 1234 5678"},
   "storage": [
     {"area": "localStorage", "key": "_hjSessionUser_2931", "vendor": "Hotjar", "category": "analytics", "purpose": "Heatmaps and session recordings"},
     {"area": "localStorage", "key": "twk_token", "vendor": "Tawk.to", "category": "functional", "purpose": "Live chat"}
