@@ -94,6 +94,7 @@ async function scan(url, { proxyOptions } = {}) {
 
 async function run(browser, url, siteDomain, deadlineAt) {
   const hosts = new Map(), storageKeys = new Set(), pagesVisited = [], errors = [];
+  let site = {};
   const timeLeft = () => deadlineAt - Date.now();
 
   const context = await browser.newContext({
@@ -150,6 +151,35 @@ async function run(browser, url, siteDomain, deadlineAt) {
         const raw = await page.$$eval("a[href]", as => as.map(a => a.href)).catch(() => []);
         links = [...new Set(raw)].filter(h => { try { const u = new URL(h); return u.hostname === base.hostname && /^https?:$/.test(u.protocol) && !/\.(pdf|jpe?g|png|zip|docx?|xlsx?)$/i.test(u.pathname) && !/logout|signout|wp-admin|cart\/add/i.test(u.pathname); } catch { return false; } })
           .map(stripHash).filter(h => h !== base.href).slice(0, MAX_PAGES * 3);
+        // Best-effort details to pre-fill the configurator (organisation name, privacy
+        // notice link, contact email/phone). Everything is optional and user-editable.
+        site = await page.evaluate(() => {
+          const meta = n => { const el = document.querySelector(`meta[property="${n}"],meta[name="${n}"]`); return (el && el.content) || ""; };
+          let orgName = meta("og:site_name") || meta("application-name") || "";
+          try {
+            for (const s of document.querySelectorAll('script[type="application/ld+json"]')) {
+              const parsed = JSON.parse(s.textContent);
+              const list = Array.isArray(parsed) ? parsed : (parsed && parsed["@graph"]) || [parsed];
+              for (const o of list) {
+                const types = [].concat((o && o["@type"]) || "").join(" ");
+                if (o && o.name && /(Organization|LocalBusiness|Corporation|Store|NGO)/i.test(types)) { orgName = orgName || o.name; }
+              }
+            }
+          } catch (e) {}
+          if (!orgName) orgName = (document.title || "").split(/[|–—\-:·]/)[0].trim();
+          const links = [...document.querySelectorAll("a[href]")];
+          const href = a => a.getAttribute("href") || "";
+          const privacy = links.find(a => /privacy|data.?protection|\bpolicy\b/i.test((a.textContent || "") + " " + href(a)));
+          const mail = links.find(a => /^mailto:/i.test(href(a)));
+          const tel = links.find(a => /^tel:/i.test(href(a)));
+          const clean = (s, n) => String(s || "").trim().slice(0, n);
+          return {
+            orgName: clean(orgName, 150),
+            privacyUrl: privacy ? privacy.href : "",
+            email: mail ? clean(decodeURIComponent(href(mail).replace(/^mailto:/i, "").split("?")[0]), 200) : "",
+            phone: tel ? clean(href(tel).replace(/^tel:/i, "").replace(/[^\d+ ()-]/g, ""), 30) : "",
+          };
+        }).catch(() => ({}));
       }
       return { visited: true, links };
     } catch (e) {
@@ -188,7 +218,7 @@ async function run(browser, url, siteDomain, deadlineAt) {
 
   const cookies = (await context.cookies()).map(c => {
     const cls = classifyCookie(c.name), cdom = c.domain.replace(/^\./, "");
-    return { name: c.name, domain: cdom, firstParty: registrable(cdom) === siteDomain, duration: duration(c.expires), vendor: cls.vendor, category: cls.category, purpose: cls.purpose };
+    return { name: c.name, domain: cdom, firstParty: registrable(cdom) === siteDomain, duration: duration(c.expires), vendor: cls.vendor, category: cls.category, purpose: cls.purpose, suggested: cls.suggested || "" };
   }).sort((a, b) => a.category.localeCompare(b.category) || a.name.localeCompare(b.name));
 
   const storage = [...storageKeys].map(s => JSON.parse(s)).map(([area, key]) => ({ area, key, ...classifyCookie(key) })); // same patterns as cookies
@@ -209,7 +239,7 @@ async function run(browser, url, siteDomain, deadlineAt) {
   if (errors.length) findings.push({ level: "low", text: `${errors.length} page(s) couldn't be loaded during the scan.` });
   if (incomplete) findings.push({ level: "low", text: `The scan stopped early to stay within the time limit; results cover ${pagesVisited.length} page(s). Trackers on pages we didn't reach may not be listed.` });
 
-  return { url: url.href, domain: url.hostname.replace(/^www\./, ""), scannedAt: new Date().toISOString(), pagesVisited, cookies, storage, thirdParties, vendors,
+  return { url: url.href, domain: url.hostname.replace(/^www\./, ""), scannedAt: new Date().toISOString(), site, pagesVisited, cookies, storage, thirdParties, vendors,
     hints: vendors.filter(v => TAGGING_HINTS[v]).map(v => ({ vendor: v, hint: TAGGING_HINTS[v] })), findings, errors, incomplete };
 }
 

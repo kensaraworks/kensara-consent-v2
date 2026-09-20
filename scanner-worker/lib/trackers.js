@@ -18,7 +18,7 @@ const COOKIES = [
 
   // ---- Functional: chat, language, embeds ----
   { re: /^(intercom-.*)$/, vendor: "Intercom", category: "functional", purpose: "Live chat" },
-  { re: /^(TawkConnectionTime|twk_.*|__tawkuuid)$/, vendor: "Tawk.to", category: "functional", purpose: "Live chat" },
+  { re: /^(TawkConnectionTime|twk_.*|tawk_.*|__tawkuuid.*)$/i, vendor: "Tawk.to", category: "functional", purpose: "Live chat widget" },
   { re: /^(crisp-client.*)$/, vendor: "Crisp", category: "functional", purpose: "Live chat" },
   { re: /^(_fw_crm_v|fw_.*)$/, vendor: "Freshworks", category: "functional", purpose: "Chat and CRM widget" },
   { re: /^(zsc.*|zft-sdc|ZohoMarkRef|ZohoMarkSrc)$/, vendor: "Zoho", category: "functional", purpose: "Chat and forms widget" },
@@ -129,9 +129,33 @@ const TAGGING_HINTS = {
   "YouTube": "Swap embeds to youtube-nocookie.com, or change <iframe src> to data-src with data-consent=\"marketing\".",
 };
 
+// Plain-language best guesses for cookies we don't recognise by name, so a
+// non-technical user isn't left staring at a bare "Unknown". These never decide
+// the category on their own — they only SUGGEST one and explain, in everyday
+// words, what the name looks like. The organisation still confirms.
+const GUESSES = [
+  { re: /(^|[_-])(sess|sid|session|token|csrf|xsrf|auth|login|logged|secure|cart|checkout|nonce|verify)([_-]|\d|$)/i,
+    category: "necessary", note: "The name looks like a sign-in, security or shopping-cart cookie the site needs to work." },
+  { re: /(^|[_-])(ad|ads|adid|gcl|fbp|fbc|pixel|track|campaign|utm|click|conversion|remarket|retarget|audience|affiliate|partner)([_-]|\d|$)/i,
+    category: "marketing", note: "The name suggests advertising or conversion tracking (used to show or measure ads)." },
+  { re: /(^|[_-])(ga|gid|stat|analytic|metric|measure|visit|pageview|hj|clarity|amplitude|mixpanel|matomo|heap|session_?rec|hotjar)([_-]|\d|$)/i,
+    category: "analytics", note: "The name suggests a visitor-analytics cookie (counts visits or records how the page is used)." },
+  { re: /(^|[_-])(lang|locale|i18n|country|region|theme|dark|font|chat|widget|tawk|zendesk|intercom|crisp|drift|player|video|embed|map|pref|display|ui|timezone)([_-]|\d|$)/i,
+    category: "functional", note: "The name suggests a convenience feature such as language, chat, maps or an embedded widget." },
+  { re: /(uuid|guid|visitor_?id|client_?id|device_?id|user_?id|[_-]uid|anon)/i,
+    category: "analytics", note: "This stores a unique ID for your browser, usually to recognise repeat visitors. That is normally analytics, but some advertising tools do the same — please confirm which applies." },
+];
+function guessCookie(name) {
+  for (const g of GUESSES) if (g.re.test(name)) return { category: g.category, note: g.note };
+  return null;
+}
+
 function classifyCookie(name) {
-  for (const c of COOKIES) if (c.re.test(name)) return { vendor: c.vendor, category: c.category, purpose: c.purpose };
-  return { vendor: "Unknown", category: "unclassified", purpose: "" };
+  for (const c of COOKIES) if (c.re.test(name)) return { vendor: c.vendor, category: c.category, purpose: c.purpose, suggested: "" };
+  const g = guessCookie(name);
+  if (g) return { vendor: "Unknown", category: "unclassified", purpose: g.note, suggested: g.category };
+  return { vendor: "Unknown", category: "unclassified", suggested: "",
+    purpose: "We couldn't identify this one automatically. If the site doesn't need it to work, treat it as optional and pick the closest category." };
 }
 
 function classifyHost(host) {
